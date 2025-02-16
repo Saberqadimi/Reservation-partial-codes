@@ -23,9 +23,9 @@ class ReservationService
             return response()->json(['error' => 'No teacher found for this subject'], 404);
         }
 
-        $approvedMeetings = $this->getApprovedMeetingTimes($request->date);
+        $meetingTimes = $this->getMeetingTimes($request->date);
 
-        return $this->generateTimeSlots($approvedMeetings);
+        return $this->generateTimeSlots($meetingTimes);
     }
 
     private function getTeacherBySubject($subject)
@@ -33,17 +33,18 @@ class ReservationService
         return TeacherSubject::where('subject', $subject)->first();
     }
 
-    private function getApprovedMeetingTimes($date)
+    private function getMeetingTimes($date)
     {
         return Meeting::where('date', $date)
-            ->where('status', 'approved')
-            ->select('start_time')
+            ->whereIn('status', ['approved', 'pending'])
+            ->select('start_time', 'status')
             ->get()
-            ->map(fn($meeting) => Carbon::parse($meeting->start_time)->format('H:i'));
+            ->mapWithKeys(function ($meeting) {
+                return [Carbon::parse($meeting->start_time)->format('H:i') => $meeting->status];
+            });
     }
 
-
-    private function generateTimeSlots($approvedMeetings)
+    private function generateTimeSlots($meetingTimes)
     {
         $startTime = Carbon::createFromTime(TimeReserveMeeting::START_HOUR_DAY->value, 0);
         $endTime = Carbon::createFromTime(TimeReserveMeeting::END_HOUR_DAY->value, 0);
@@ -58,12 +59,19 @@ class ReservationService
             }
 
             $formattedStart = $startTime->format('H:i');
-            $formattedEnd = $nextTime->format('H:i');
-            $isApproved = $approvedMeetings->contains($formattedStart);
+            $status = $meetingTimes[$formattedStart] ?? null;
+
+            if ($status === 'approved') {
+                $finalStatus = 'approved';
+            } elseif ($status === 'pending') {
+                $finalStatus = 'reserved';
+            } else {
+                $finalStatus = 'pending';
+            }
 
             $timeSlots[] = [
-                'time' => "$formattedStart - $formattedEnd",
-                'status' => $isApproved ? 'approved' : 'pending'
+                'time' => $formattedStart,
+                'status' => $finalStatus
             ];
 
             $startTime = $nextTime;
